@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FactoryWatch Lite</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#eef1f4; --card:#fff; --ink:#1c2630; --mute:#6b7885; --ok:#1f8a5b; --bad:#c8432b; --line:#d5dbe1; --accent:#1d4e89; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: "Segoe UI", system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:16px 20px; background:var(--ink); color:#fff; }
+  header h1 { margin:0; font-size:1.15rem; font-weight:600; }
+  header p { margin:2px 0 0; font-size:.85rem; color:#aab6c2; }
+  main { max-width:1000px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+  .machines { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
+  .m { background:var(--card); border:1px solid var(--line); border-left:6px solid var(--ok); border-radius:6px; padding:12px; cursor:pointer; }
+  .m.hot { border-left-color:var(--bad); }
+  .m.sel { outline:2px solid var(--accent); }
+  .m h3 { margin:0; font-size:1rem; } .m small { color:var(--mute); }
+  .vals { display:flex; gap:14px; margin-top:8px; font-size:.9rem; }
+  .vals b { display:block; font-size:1.2rem; }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:14px; }
+  .panel h2 { margin:0 0 10px; font-size:1rem; }
+  ul { list-style:none; margin:0; padding:0; } li { padding:7px 0; border-bottom:1px solid var(--line); font-size:.9rem; }
+  li:last-child { border:none; } li span { color:var(--mute); font-size:.8rem; }
+  button:focus-visible, .m:focus-visible { outline:3px solid var(--accent); }
+</style>
+</head>
+<body>
+<header><h1>FactoryWatch Lite</h1><p>Live machine health, updates every 2 seconds</p></header>
+<main>
+  <div class="machines" id="machines"></div>
+  <div class="panel"><h2 id="chartTitle">Select a machine</h2><canvas id="chart" height="110"></canvas></div>
+  <div class="panel"><h2>Recent alerts</h2><ul id="alerts"><li>No alerts yet.</li></ul></div>
+</main>
+<script>
+let selected = 1, chart;
+const LIM = { temperature: 85, vibration: 7, power: 12 };
+
+async function api(url) { const r = await fetch(url); return r.json(); }
+
+async function refresh() {
+  const machines = await api("/api/machines");
+  document.getElementById("machines").innerHTML = machines.map(m => {
+    const hot = m.temperature > LIM.temperature || m.vibration > LIM.vibration || m.power > LIM.power;
+    const f = v => (v == null ? "-" : v.toFixed(1));
+    return `<div class="m ${hot ? "hot" : ""} ${m.id === selected ? "sel" : ""}" tabindex="0" data-id="${m.id}">
+      <h3>${m.name}</h3><small>${m.location} · ${hot ? "Needs attention" : "Normal"}</small>
+      <div class="vals"><div><b>${f(m.temperature)}°C</b>Temp</div><div><b>${f(m.vibration)}</b>Vibration</div><div><b>${f(m.power)} kW</b>Power</div></div></div>`;
+  }).join("");
+  document.querySelectorAll(".m").forEach(el => el.onclick = () => { selected = +el.dataset.id; refresh(); });
+
+  const name = (machines.find(m => m.id === selected) || {}).name || "";
+  document.getElementById("chartTitle").textContent = name + ": last 30 readings";
+  const rows = await api("/api/readings/" + selected);
+  const labels = rows.map(r => r.ts.slice(11, 19));
+  const ds = (label, key, color) => ({ label, data: rows.map(r => r[key]), borderColor: color, tension: .3, pointRadius: 0 });
+  const data = { labels, datasets: [ds("Temperature (°C)", "temperature", "#c8432b"), ds("Vibration", "vibration", "#1d4e89"), ds("Power (kW)", "power", "#1f8a5b")] };
+  if (!chart) chart = new Chart(document.getElementById("chart"), { type: "line", data, options: { animation: false } });
+  else { chart.data = data; chart.update(); }
+
+  const alerts = await api("/api/alerts");
+  if (alerts.length) document.getElementById("alerts").innerHTML =
+    alerts.map(a => `<li><b>${a.name}</b>: ${a.message}<br><span>${a.ts}</span></li>`).join("");
+}
+refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>
